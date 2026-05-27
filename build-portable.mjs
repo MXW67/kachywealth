@@ -15,8 +15,8 @@ import sharp from 'sharp';
 const here = dirname(fileURLToPath(import.meta.url));
 
 const ASSETS = [
-  { file: 'PHILO BUSINESS PICTURE.png', optimize: { width: 900, fmt: 'jpeg', q: 82 } },
-  { file: 'KACHY copy.png',             optimize: { width: 400, fmt: 'png' } },
+  { file: 'PHILO PIC.jpg', optimize: { width: 1200, fmt: 'jpeg', q: 86 } },
+  { file: 'KACHY copy.png',             optimize: { width: 600, fmt: 'png' } },
   { file: 'KACHY LOGO 2.png',           optimize: { width: 600, fmt: 'png' } },
   { file: 'KACHY LOGO.png',             optimize: { width: 600, fmt: 'png' } },
   { file: 'transamerica_logo.png',      optimize: { width: 500, fmt: 'png' } },
@@ -27,6 +27,37 @@ const ASSETS = [
 
 async function toDataUri(spec) {
   const buf = await readFile(join(here, spec.file));
+
+  // Special: chroma-key the portrait — the source PNG has a solid black
+  // background; we want a true cutout so the cream plinth shows through.
+  if (spec.optimize.fmt === 'webp-portrait') {
+    const { data, info } = await sharp(buf)
+      .resize({ width: spec.optimize.width, withoutEnlargement: true })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    const px = Buffer.from(data); // mutable copy
+    // Smooth threshold: pure-black bg → fully transparent;
+    // near-black anti-aliased hair edges → partial transparency for a clean blend.
+    const fullyTransparentBelow = 8;   // brightness < this → alpha 0
+    const fullyOpaqueAbove      = 32;  // brightness > this → keep alpha 255
+    for (let i = 0; i < px.length; i += 4) {
+      const brightness = Math.max(px[i], px[i+1], px[i+2]);
+      if (brightness < fullyTransparentBelow) {
+        px[i+3] = 0;
+      } else if (brightness < fullyOpaqueAbove) {
+        const t = (brightness - fullyTransparentBelow) / (fullyOpaqueAbove - fullyTransparentBelow);
+        px[i+3] = Math.round(t * px[i+3]);
+      }
+    }
+
+    const out = await sharp(px, { raw: info })
+      .webp({ quality: 86, alphaQuality: 95, effort: 6 })
+      .toBuffer();
+    return { dataUri: `data:image/webp;base64,${out.toString('base64')}`, bytes: out.length };
+  }
+
   let pipe = sharp(buf).resize({ width: spec.optimize.width, withoutEnlargement: true });
   let mime;
   if (spec.optimize.fmt === 'jpeg') {
